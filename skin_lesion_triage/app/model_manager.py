@@ -1,0 +1,124 @@
+"""
+model_manager.py
+Loads the trained Keras model (ResNet50 or MobileNetV2 transfer-learning head)
+and produces:
+  1. A risk classification + probability score.
+  2. A Grad-CAM heatmap overlay for clinical interpretability (Objective 3).
+
+The model itself is trained separately via scripts/train_model.py (on Colab)
+and dropped into /models as a .keras file.
+"""
+
+import base64
+import io
+from pathlib import Path
+
+import cv2
+import numpy as np
+import tensorflow as tf
+
+from config import Config
+
+
+class ModelManager:
+    _instance = None
+
+    def __init__(self, arch: str = None):
+        arch = arch or Config.ACTIVE_MODEL
+        self.arch = arch
+        self.model_path = Path(Config.MODEL_PATHS[arch])
+        self.gradcam_layer_name = Config.GRADCAM_LAYER[arch]
+        self.class_names = Config.CLASS_NAMES
+        self.model = None
+        self._load()
+
+    def _load(self):
+        if not self.model_path.exists():
+            # Deferred failure: allows the Flask app to boot even before a
+            # model has been trained/dropped in, so /health still works.
+            self.model = None
+            return
+        self.model = tf.keras.models.load_model(self.model_path)
+
+    def is_ready(self) -> bool:
+        return self.model is not None
+
+    def predict(self, img_array: np.ndarray) -> dict:
+        """
+        Args:
+            img_array: shape (1, H, W, 3), float32, scaled 0-1 — output of
+                       preprocessing.preprocess_image().
+        Returns:
+            dict with class label, probability, and raw score.
+        """
+        if not self.is_ready():
+            raise RuntimeError(
+                f"No model file found at {self.model_path}. "
+                f"Train a model with scripts/train_model.py and place it there."
+            )
+        raw = self.model.predict(img_array, verbose=0)
+        # Binary sigmoid output => shape (1, 1). Index 1 = "Malignant Suspect".
+        malignant_prob = float(raw[0][0])
+        label_idx = int(malignant_prob >= Config.RISK_THRESHOLD)
+        return {
+            "label": self.class_names[label_idx],
+            "malignant_probability": round(malignant_prob, 4),
+            "benign_probability": round(1 - malignant_prob, 4),
+            "risk_flag": "urgent_referral" if label_idx == 1 else "routine",
+        }
+
+    def grad_cam(self, img_array: np.ndarray, pred_index: int = None) -> np.ndarray:
+        """
+        Generates a Grad-CAM heatmap (values 0-1, shape H x W) highlighting
+        the region of the lesion image that most influenced the prediction.
+        """
+        if not self.is_ready():
+            raise RuntimeError("Model not loaded; cannot compute Grad-CAM.")
+
+        grad_model = tf.keras.models.Model(
+            inputs=self.model.inputs,
+            outputs=[self.model.get_layer(self.gradcam_layer_name).output, self.model.output],
+        )
+
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(img_array)
+            if pred_index is None:
+                # Binary sigmoid: gradient of the single output neuron
+                loss = predictions[:, 0]
+            else:
+                loss = predictions[:, pred_index]
+
+        grads = tape.gradient(loss, conv_outputs)
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+        conv_outputs = conv_outputs[0]
+        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
+        heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-8)
+        return heatmap.numpy()
+
+    def overlay_heatmap(self, original_bgr: np.ndarray, heatmap: np.ndarray, alpha: float = 0.4) -> np.ndarray:
+        """Resizes heatmap to the original image size and blends it as a
+        jet colormap overlay for display in the results page."""
+        heatmap_resized = cv2.resize(heatmap, (original_bgr.shape[1], original_bgr.shape[0]))
+        heatmap_uint8 = np.uint8(255 * heatmap_resized)
+        heatmap_color = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+        overlaid = cv2.addWeighted(heatmap_color, alpha, original_bgr, 1 - alpha, 0)
+        return overlaid
+
+    @staticmethod
+    def encode_image_base64(img_bgr: np.ndarray) -> str:
+        """Encodes a BGR numpy image as a base64 PNG string for direct
+        embedding in an HTML <img src="data:image/png;base64,..."> tag."""
+        success, buffer = cv2.imencode(".png", img_bgr)
+        if not success:
+            raise ValueError("Failed to encode image.")
+        return base64.b64encode(buffer).decode("utf-8")
+
+
+def get_model_manager() -> ModelManager:
+    """Simple singleton accessor so the (potentially large) model is loaded
+    once per process, not once per request."""
+    if ModelManager._instance is None:
+        ModelManager._instance = ModelManager()
+    return ModelManager._instance

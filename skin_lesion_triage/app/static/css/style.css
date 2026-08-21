@@ -1,0 +1,26 @@
+.drop-zone {
+    border: 2px dashed #adb5bd;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    background-color: #f8f9fa;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+    border-color: #0d6efd;
+    background-color: #eef4ff;
+}
+
+.risk-badge-benign {
+    background-color: #198754;
+}
+
+.risk-badge-malignant {
+    background-color: #dc3545;
+}
+
+#result-original, #result-heatmap {
+    max-height: 280px;
+    object-fit: contain;
+}
