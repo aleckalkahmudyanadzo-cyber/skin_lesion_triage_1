@@ -7,7 +7,13 @@ import cv2
 import numpy as np
 from flask import Blueprint, current_app, jsonify, render_template, request
 
-from app.database import get_summary_stats, log_prediction
+from app.database import (
+    get_summary_stats,
+    get_survey_summary,
+    log_prediction,
+    log_survey_response,
+    compute_sus_score,
+)
 from app.model_manager import get_model_manager
 from app.preprocessing import ImageQualityError, preprocess_image
 from config import Config
@@ -99,9 +105,71 @@ def predict():
 @bp.route("/stats")
 def stats():
     try:
-        return jsonify(get_summary_stats())
+        data = get_summary_stats()
+        data["survey"] = get_survey_summary()
+        return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# System Usability Scale (Brooke, 1996) — used for Objective 4's usability
+# evaluation. Statements alternate positive/negative wording per the
+# original instrument; see compute_sus_score() in database.py for scoring.
+SUS_STATEMENTS = [
+    "I think that I would like to use this system frequently.",
+    "I found the system unnecessarily complex.",
+    "I thought the system was easy to use.",
+    "I think that I would need the support of a technical person to be able to use this system.",
+    "I found the various functions in this system were well integrated.",
+    "I thought there was too much inconsistency in this system.",
+    "I would imagine that most people would learn to use this system very quickly.",
+    "I found the system very cumbersome to use.",
+    "I felt very confident using the system.",
+    "I needed to learn a lot of things before I could get going with this system.",
+]
+
+
+@bp.route("/survey", methods=["GET", "POST"])
+def survey():
+    if request.method == "GET":
+        return render_template("survey.html", statements=SUS_STATEMENTS, submitted=False)
+
+    # POST — validate all ten answers are present and each is 1-5 before
+    # touching the database.
+    answers = {}
+    errors = []
+    for i in range(1, 11):
+        raw = request.form.get(f"q{i}")
+        if raw is None or raw == "":
+            errors.append(f"Question {i} was not answered.")
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            errors.append(f"Question {i} has an invalid answer.")
+            continue
+        if value < 1 or value > 5:
+            errors.append(f"Question {i} must be rated 1 to 5.")
+            continue
+        answers[i] = value
+
+    if errors:
+        return render_template(
+            "survey.html", statements=SUS_STATEMENTS, submitted=False, errors=errors
+        ), 400
+
+    sus_score = compute_sus_score(answers)
+
+    # Best-effort logging, same pattern as /predict — a logging failure
+    # should not stop the respondent from seeing their score.
+    try:
+        log_survey_response(answers, sus_score)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to log survey response: {e}")
+
+    return render_template(
+        "survey.html", statements=SUS_STATEMENTS, submitted=True, sus_score=sus_score
+    )
 
 
 @bp.errorhandler(413)

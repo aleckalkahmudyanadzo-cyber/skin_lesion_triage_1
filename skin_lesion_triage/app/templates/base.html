@@ -13,9 +13,12 @@
             <a class="navbar-brand fw-bold" href="{{ url_for('main.index') }}">
                 🩺 Skin Lesion Triage
             </a>
-            <span class="navbar-text small text-light-emphasis">
-                Decision-support tool &mdash; not a diagnosis
-            </span>
+            <div class="d-flex align-items-center gap-3">
+                <a class="nav-link text-light" href="{{ url_for('main.survey') }}">Usability Survey</a>
+                <span class="navbar-text small text-light-emphasis">
+                    Decision-support tool &mdash; not a diagnosis
+                </span>
+            </div>
         </div>
     </nav>
 

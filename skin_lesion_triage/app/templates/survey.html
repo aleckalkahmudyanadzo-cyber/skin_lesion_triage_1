@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Usability Survey &mdash; Skin Lesion Triage{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+
+        {% if submitted %}
+        <div class="card shadow-sm">
+            <div class="card-body text-center py-5">
+                <h4 class="card-title mb-3">Thank you</h4>
+                <p class="text-muted">Your response has been recorded anonymously.</p>
+                <p class="display-6 fw-bold mt-3">{{ sus_score }} <span class="fs-5 text-muted">/ 100</span></p>
+                <p class="text-muted small">System Usability Scale score</p>
+                <a href="{{ url_for('main.index') }}" class="btn btn-primary mt-3">Back to Home</a>
+            </div>
+        </div>
+        {% else %}
+
+        <div class="alert alert-info" role="alert">
+            This short survey rates how easy the triage tool was to use. It takes about a
+            minute. Responses are stored anonymously &mdash; no name or contact details are
+            collected.
+        </div>
+
+        {% if errors %}
+        <div class="alert alert-danger" role="alert">
+            <ul class="mb-0">
+                {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('main.survey') }}">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    {% for statement in statements %}
+                    {% set qnum = loop.index %}
+                    <div class="mb-4 {% if not loop.last %}border-bottom pb-4{% endif %}">
+                        <p class="fw-semibold mb-2">{{ qnum }}. {{ statement }}</p>
+                        <div class="d-flex justify-content-between px-2">
+                            {% for value in range(1, 6) %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio"
+                                       name="q{{ qnum }}" id="q{{ qnum }}_{{ value }}"
+                                       value="{{ value }}" required>
+                                <label class="form-check-label small" for="q{{ qnum }}_{{ value }}">
+                                    {{ value }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="d-flex justify-content-between px-2 small text-muted">
+                            <span>Strongly disagree</span>
+                            <span>Strongly agree</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg">Submit Survey</button>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
