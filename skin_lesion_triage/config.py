@@ -36,11 +36,22 @@ class Config:
         "mobilenetv2": MODEL_DIR / "mobilenetv2_skin_lesion.keras",
     }
 
+    # Per-architecture tuned threshold, written by scripts/train_model.py
+    # alongside the .keras file. Falls back to RISK_THRESHOLD below if the
+    # model was trained before threshold tuning existed, or the file is
+    # missing for any other reason.
+    THRESHOLD_PATHS = {
+        "resnet50": MODEL_DIR / "resnet50_skin_lesion_threshold.json",
+        "mobilenetv2": MODEL_DIR / "mobilenetv2_skin_lesion_threshold.json",
+    }
+
     # Grad-CAM target conv layer names per architecture
     GRADCAM_LAYER = {
         "resnet50": "conv5_block3_out",
         "mobilenetv2": "Conv_1",
     }
 
-    # Decision threshold on the malignant-suspect probability
+    # Decision threshold on the malignant-suspect probability. This is the
+    # fallback used only if no tuned *_threshold.json exists for the active
+    # model (see THRESHOLD_PATHS and ModelManager._load_threshold).
     RISK_THRESHOLD = float(os.environ.get("RISK_THRESHOLD", "0.5"))

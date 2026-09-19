@@ -34,6 +34,8 @@ def health():
         "status": "ok",
         "model_loaded": manager.is_ready(),
         "active_model": manager.arch,
+        "risk_threshold": manager.threshold,
+        "threshold_source": manager.threshold_source,
     })
 
 

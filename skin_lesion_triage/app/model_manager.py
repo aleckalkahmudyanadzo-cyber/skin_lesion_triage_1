@@ -11,6 +11,7 @@ and dropped into /models as a .keras file.
 
 import base64
 import io
+import json
 from pathlib import Path
 
 import cv2
@@ -27,10 +28,14 @@ class ModelManager:
         arch = arch or Config.ACTIVE_MODEL
         self.arch = arch
         self.model_path = Path(Config.MODEL_PATHS[arch])
+        self.threshold_path = Path(Config.THRESHOLD_PATHS[arch])
         self.gradcam_layer_name = Config.GRADCAM_LAYER[arch]
         self.class_names = Config.CLASS_NAMES
         self.model = None
+        self.threshold = Config.RISK_THRESHOLD
+        self.threshold_source = "default"
         self._load()
+        self._load_threshold()
 
     def _load(self):
         if not self.model_path.exists():
@@ -39,6 +44,27 @@ class ModelManager:
             self.model = None
             return
         self.model = tf.keras.models.load_model(self.model_path)
+
+    def _load_threshold(self):
+        """Loads the tuned threshold written by train_model.py next to the
+        model, if present. Otherwise keeps Config.RISK_THRESHOLD (0.5 by
+        default), which will not generally meet the Objective 2 recall
+        target and should be treated as a placeholder, not a deployed
+        setting."""
+        if not self.threshold_path.exists():
+            return
+        try:
+            with open(self.threshold_path) as f:
+                data = json.load(f)
+            self.threshold = float(data["threshold"])
+            self.threshold_source = "tuned"
+            if not data.get("met_target", True):
+                self.threshold_source = "tuned_fallback"
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # Corrupt or unexpected file: fail safe to the configured default
+            # rather than crashing app start-up.
+            self.threshold = Config.RISK_THRESHOLD
+            self.threshold_source = "default"
 
     def is_ready(self) -> bool:
         return self.model is not None
@@ -59,12 +85,14 @@ class ModelManager:
         raw = self.model.predict(img_array, verbose=0)
         # Binary sigmoid output => shape (1, 1). Index 1 = "Malignant Suspect".
         malignant_prob = float(raw[0][0])
-        label_idx = int(malignant_prob >= Config.RISK_THRESHOLD)
+        label_idx = int(malignant_prob >= self.threshold)
         return {
             "label": self.class_names[label_idx],
             "malignant_probability": round(malignant_prob, 4),
             "benign_probability": round(1 - malignant_prob, 4),
             "risk_flag": "urgent_referral" if label_idx == 1 else "routine",
+            "threshold_used": self.threshold,
+            "threshold_source": self.threshold_source,
         }
 
     def grad_cam(self, img_array: np.ndarray, pred_index: int = None) -> np.ndarray:
